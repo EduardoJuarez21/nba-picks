@@ -1,0 +1,10 @@
+flask
+flask-cors
+python-dotenv
+requests
+gunicorn
+psycopg2-binary
+PyPDF2
+nba_api
+nflreadpy
+pdfplumber

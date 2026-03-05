@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: nba-pipeline
+    env: python
+    plan: free
+    buildCommand: pip install -r nba_service/requirements.txt
+    startCommand: gunicorn nba_service.app:app --bind 0.0.0.0:$PORT --timeout 600
+    autoDeploy: true
