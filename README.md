@@ -25,15 +25,15 @@ Desde la raiz del repo:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r nba_service/requirements.txt
-python -m nba_service.app
+pip install -r requirements.txt
+python app.py
 ```
 
 Por defecto corre en `http://localhost:5001`.
 
 ## Despliegue
 
-Con Render, puedes usar `nba_service/render.yaml` o configurar manualmente:
+Con Render, puedes usar `render.yaml` o configurar manualmente:
 
-- Build command: `pip install -r nba_service/requirements.txt`
-- Start command: `gunicorn nba_service.app:app --bind 0.0.0.0:$PORT --timeout 600`
+- Build command: `pip install -r requirements.txt`
+- Start command: `gunicorn wsgi:app --bind 0.0.0.0:$PORT --timeout 600`

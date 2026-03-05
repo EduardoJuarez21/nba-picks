@@ -11,7 +11,13 @@ from pathlib import Path
 
 import requests
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
+BASE_DIR = Path(__file__).resolve().parent
+if (BASE_DIR / "scripts").is_dir():
+    ROOT_DIR = BASE_DIR
+elif (BASE_DIR.parent / "scripts").is_dir():
+    ROOT_DIR = BASE_DIR.parent
+else:
+    ROOT_DIR = BASE_DIR
 SCRIPTS_DIR = ROOT_DIR / "scripts"
 DATA_DIR = os.getenv("DATA_DIR", "data")
 

@@ -6,9 +6,16 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from nba_service import services
+try:
+    from nba_service import services  # type: ignore
+except ModuleNotFoundError:
+    import services  # type: ignore
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
+BASE_DIR = Path(__file__).resolve().parent
+if (BASE_DIR / "services.py").is_file():
+    ROOT_DIR = BASE_DIR
+else:
+    ROOT_DIR = BASE_DIR.parent
 ENV_PATH = Path(os.getenv("ENV_PATH", ROOT_DIR / ".env"))
 if ENV_PATH.is_file():
     load_dotenv(ENV_PATH, override=False)
