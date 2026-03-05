@@ -1,4 +1,3 @@
-import hmac
 import os
 from pathlib import Path
 
@@ -22,12 +21,6 @@ if ENV_PATH.is_file():
 
 app = Flask(__name__)
 
-API_AUTH_HEADER = (os.getenv("API_AUTH_HEADER", "X-API-Token") or "X-API-Token").strip()
-API_AUTH_TOKEN = (os.getenv("API_AUTH_TOKEN", "") or "").strip()
-API_AUTH_LOG_TOKEN = (os.getenv("API_AUTH_LOG_TOKEN", "false") or "false").strip().lower() == "true"
-PUBLIC_PATHS_RAW = os.getenv("API_AUTH_PUBLIC_PATHS", "/,/nba/picks/result")
-PUBLIC_PATHS = {p.strip() for p in PUBLIC_PATHS_RAW.split(",") if p.strip()}
-
 CORS(
     app,
     resources={r"/*": {"origins": os.getenv("CORS_ORIGINS", "*").split(",")}},
@@ -35,41 +28,11 @@ CORS(
 )
 
 
-def _extract_token() -> str:
-    token = (request.headers.get(API_AUTH_HEADER) or "").strip()
-    if token:
-        return token
-    auth = (request.headers.get("Authorization") or "").strip()
-    if auth.lower().startswith("bearer "):
-        return auth[7:].strip()
-    return ""
-
-
-@app.before_request
-def _require_api_token():
-    if request.method == "OPTIONS":
-        return None
-    if request.path in PUBLIC_PATHS:
-        return None
-    if not API_AUTH_TOKEN:
-        return jsonify({"status": "error", "error": "API auth token not configured"}), 500
-    provided = _extract_token()
-    token_match = bool(provided) and hmac.compare_digest(provided, API_AUTH_TOKEN)
-    if API_AUTH_LOG_TOKEN:
-        print(
-            f"[auth-debug] method={request.method} path={request.path} "
-            f"header={API_AUTH_HEADER} provided_present={bool(provided)} token_match={token_match}"
-        )
-    if not token_match:
-        return jsonify({"status": "error", "error": "unauthorized"}), 401
-    return None
-
-
 @app.after_request
 def _add_cors_headers(resp):
     origin = os.getenv("CORS_ALLOW_ORIGIN", "*")
     resp.headers.setdefault("Access-Control-Allow-Origin", origin)
-    allow_headers = f"Content-Type, Authorization, {API_AUTH_HEADER}"
+    allow_headers = "Content-Type, Authorization"
     resp.headers.setdefault("Access-Control-Allow-Headers", allow_headers)
     resp.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
     return resp
