@@ -13,6 +13,7 @@ Microservicio Flask para separar el flujo NBA del proyecto principal.
 
 - `API_AUTH_TOKEN` (requerida)
 - `API_AUTH_HEADER` (default: `X-API-Token`)
+- `API_AUTH_PUBLIC_PATHS` (default: `/,/nba/picks/result`)
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 - `DATA_DIR` (default: `data`)

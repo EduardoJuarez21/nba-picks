@@ -25,6 +25,8 @@ app = Flask(__name__)
 API_AUTH_HEADER = (os.getenv("API_AUTH_HEADER", "X-API-Token") or "X-API-Token").strip()
 API_AUTH_TOKEN = (os.getenv("API_AUTH_TOKEN", "") or "").strip()
 API_AUTH_LOG_TOKEN = (os.getenv("API_AUTH_LOG_TOKEN", "false") or "false").strip().lower() == "true"
+PUBLIC_PATHS_RAW = os.getenv("API_AUTH_PUBLIC_PATHS", "/,/nba/picks/result")
+PUBLIC_PATHS = {p.strip() for p in PUBLIC_PATHS_RAW.split(",") if p.strip()}
 
 CORS(
     app,
@@ -46,6 +48,8 @@ def _extract_token() -> str:
 @app.before_request
 def _require_api_token():
     if request.method == "OPTIONS":
+        return None
+    if request.path in PUBLIC_PATHS:
         return None
     if not API_AUTH_TOKEN:
         return jsonify({"status": "error", "error": "API auth token not configured"}), 500
