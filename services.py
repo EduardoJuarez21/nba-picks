@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 import uuid
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -237,6 +237,96 @@ def _send_telegram_picks_from_rows(rows: list[dict], day: str, single_message: b
     return 1 if _send_telegram_message(text) else 0
 
 
+def _db_url() -> str | None:
+    return os.getenv("DATABASE_URL") or None
+
+
+def _db_save_picks_rows(day: str, rows: list[dict]) -> int:
+    """Guarda los picks NBA en picks_rows. Devuelve el número de filas insertadas."""
+    url = _db_url()
+    if not url or not rows:
+        return 0
+    try:
+        import psycopg2
+    except ImportError:
+        _log("db", "psycopg2 no disponible, saltando guardado en BD")
+        return 0
+
+    try:
+        conn = psycopg2.connect(url)
+        conn.autocommit = False
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM picks_rows WHERE league = %s AND day = %s",
+                    ("nba", day),
+                )
+                inserted = 0
+                for r in rows:
+                    try:
+                        cur.execute(
+                            """
+                            INSERT INTO picks_rows (
+                                league, day, match_id, run_id, created_at_utc, kickoff_utc,
+                                home, away, market, pick, line, odds, book, books_count,
+                                lambda_home, lambda_away, p_home, p_draw, p_away, p_hat,
+                                p_implied, edge, ev, hh_games, aa_games, decision, flags,
+                                result, bet
+                            ) VALUES (
+                                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
+                            )
+                            ON CONFLICT (league, day, kickoff_utc, home, away, market, pick, line)
+                            DO UPDATE SET
+                                decision = excluded.decision,
+                                odds = excluded.odds,
+                                edge = excluded.edge,
+                                ev = excluded.ev,
+                                flags = excluded.flags,
+                                bet = excluded.bet
+                            """,
+                            (
+                                "nba", day,
+                                r.get("match_id", ""),
+                                r.get("run_id", ""),
+                                r.get("created_at_utc", ""),
+                                r.get("kickoff_utc", ""),
+                                r.get("home", ""),
+                                r.get("away", ""),
+                                r.get("market", ""),
+                                r.get("pick", ""),
+                                r.get("line", ""),
+                                r.get("odds", ""),
+                                r.get("book", ""),
+                                r.get("books_count", ""),
+                                r.get("lambda_home", ""),
+                                r.get("lambda_away", ""),
+                                r.get("p_home", ""),
+                                r.get("p_draw", ""),
+                                r.get("p_away", ""),
+                                r.get("p_hat", ""),
+                                r.get("p_implied", ""),
+                                r.get("edge", ""),
+                                r.get("ev", ""),
+                                r.get("hh_games", ""),
+                                r.get("aa_games", ""),
+                                r.get("decision", ""),
+                                r.get("flags", ""),
+                                r.get("result", ""),
+                                r.get("bet", ""),
+                            ),
+                        )
+                        inserted += 1
+                    except Exception as exc:
+                        _log("db", f"error insertando fila match_id={r.get('match_id')}: {exc}")
+        conn.close()
+        _log("db", f"picks_rows insertadas={inserted} league=nba day={day}")
+        return inserted
+    except Exception as exc:
+        _log("db", f"error guardando en BD: {exc}")
+        return 0
+
+
 def _run_job(job_id: str, day: str, force: bool) -> None:
     with _jobs_lock:
         _jobs[job_id] = {"status": "running", "league": "nba", "day": day, "force": force}
@@ -244,6 +334,7 @@ def _run_job(job_id: str, day: str, force: bool) -> None:
         result = _run_nba_pipeline(day)
         picks_path = _picks_path(day)
         _, rows = _read_tsv_rows(picks_path)
+        db_saved = _db_save_picks_rows(day, rows) if rows else 0
         sent = _send_telegram_picks_from_rows(rows, day, single_message=True, max_chars=3500) if rows else 0
         with _jobs_lock:
             _jobs[job_id] = {
@@ -251,6 +342,7 @@ def _run_job(job_id: str, day: str, force: bool) -> None:
                 "league": "nba",
                 "day": day,
                 "telegram_messages": sent,
+                "db_rows_saved": db_saved,
                 "rows": len(rows),
             }
     except Exception as exc:
