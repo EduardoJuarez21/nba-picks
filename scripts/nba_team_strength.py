@@ -1,241 +1,247 @@
+"""nba_team_strength.py
+
+Obtiene estadisticas de equipos NBA desde Tank01 Fantasy Stats (RapidAPI).
+- Season averages (ppg/oppg):  getNBATeams
+- Home/Away splits + last-10:  getNBATeamSchedule  (1 call por equipo del dia)
+
+Produce el mismo formato JSON que consume nba_build_ready_context.py.
+
+Vars de entorno:
+  RAPIDAPI_KEY              requerida
+  DAY                       YYYY-MM-DD  requerida
+  LEAGUE                    default: nba
+  FIXTURES_PATH             para leer equipos del dia
+  OUT_PATH_TEAM_STRENGTH    override ruta de salida
+  NBA_SPLITS_LAST_N         cuantos juegos para last-N (default: 10)
+"""
+
 import json
 import os
 from datetime import date
 from pathlib import Path
-from typing import Any, Dict, List
+from statistics import mean
+from typing import Any, Dict, List, Optional, Tuple
 
-from nba_api.stats.endpoints import leaguedashteamstats, teamdashboardbygeneralsplits
+import requests
 
-from nba_utils import nba_stats_headers, resolve_nba_season, versioned_path
+from nba_utils import versioned_path
+
+RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "").strip()
+RAPIDAPI_HOST = "tank01-fantasy-stats.p.rapidapi.com"
 
 LEAGUE = os.getenv("LEAGUE", "nba")
 DAY = os.getenv("DAY", "").strip()
 if not DAY:
     raise SystemExit("Falta DAY en .env (YYYY-MM-DD)")
-
-SEASON = resolve_nba_season(DAY)
+if not RAPIDAPI_KEY:
+    raise SystemExit("Falta RAPIDAPI_KEY en .env")
 
 FIXTURES_PATH = os.getenv("FIXTURES_PATH", versioned_path(LEAGUE, "fixtures", "fixtures", DAY))
-DEFAULT_PATH = versioned_path(LEAGUE, "team_strength", "team_strength", DAY)
-OUT_PATH = os.getenv("OUT_PATH_TEAM_STRENGTH", DEFAULT_PATH)
-NBA_STATS_HEADERS = nba_stats_headers()
+OUT_PATH = os.getenv("OUT_PATH_TEAM_STRENGTH", versioned_path(LEAGUE, "team_strength", "team_strength", DAY))
+LAST_N = int(os.getenv("NBA_SPLITS_LAST_N", "10"))
+
+# Año de temporada para getNBATeamSchedule (2025-26 -> "2026")
+_DAY_DATE = date.fromisoformat(DAY)
+SEASON_YEAR = str(_DAY_DATE.year if _DAY_DATE.month >= 7 else _DAY_DATE.year)
+DAY_INT = int(DAY.replace("-", ""))   # Para comparar con gameDate YYYYMMDD
+
+
+def _api_get(url: str, params: Dict[str, Any] = {}) -> Any:
+    headers = {
+        "x-rapidapi-host": RAPIDAPI_HOST,
+        "x-rapidapi-key": RAPIDAPI_KEY,
+    }
+    r = requests.get(url, headers=headers, params=params, timeout=30)
+    if r.status_code >= 400:
+        raise RuntimeError(f"Tank01 API error {r.status_code}: {r.text[:400]}")
+    data = r.json()
+    return data.get("body", data) if isinstance(data, dict) else data
+
+
+def _safe_float(v: Any) -> Optional[float]:
+    try:
+        if v is None or str(v).strip() in ("", "—"):
+            return None
+        return float(str(v).strip())
+    except Exception:
+        return None
+
+
+def _safe_int(v: Any) -> Optional[int]:
+    try:
+        if v is None or str(v).strip() == "":
+            return None
+        return int(str(v).strip())
+    except Exception:
+        return None
+
+
+def _avg(vals: List[float]) -> Optional[float]:
+    return round(mean(vals), 2) if vals else None
 
 
 def _read_fixtures(path: str) -> List[Dict[str, Any]]:
-    if not Path(path).is_file():
-        return []
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    p = Path(path)
+    return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else []
 
 
-def _fetch_team_stats(
-    location: str | None = None,
-    last_n_games: int | None = None,
-    measure_type: str | None = None,
-) -> Dict[int, Dict[str, Any]]:
-    params: Dict[str, Any] = {
-        "season": SEASON,
-        "per_mode_detailed": "PerGame",
-    }
-    if measure_type:
-        params["measure_type_detailed_defense"] = measure_type
-    if location:
-        params["location_nullable"] = location
-    if last_n_games is not None:
-        params["last_n_games"] = str(last_n_games)
-    try:
-        stats = leaguedashteamstats.LeagueDashTeamStats(
-            headers=NBA_STATS_HEADERS,
-            **params,
-        ).get_dict()
-    except Exception:
+def _fetch_all_teams() -> Dict[int, Dict[str, Any]]:
+    """Devuelve {teamID: team_record} con ppg, oppg, teamAbv, etc."""
+    body = _api_get(f"https://{RAPIDAPI_HOST}/getNBATeams")
+    if not isinstance(body, list):
         return {}
+    return {int(t["teamID"]): t for t in body if t.get("teamID")}
 
-    if not stats:
-        return {}
 
-    result_sets = stats.get("resultSets")
-    if isinstance(result_sets, list) and result_sets:
-        result = result_sets[0]
-    elif isinstance(stats.get("resultSet"), dict):
-        result = stats.get("resultSet") or {}
-    else:
-        return {}
-    headers = result.get("headers") or []
-    rows = result.get("rowSet") or []
-    by_team: Dict[int, Dict[str, Any]] = {}
-    for row in rows:
-        row_map = {headers[i]: row[i] for i in range(len(headers))}
-        team_id = row_map.get("TEAM_ID")
-        if team_id is None:
+def _fetch_schedule(team_id: int) -> List[Dict[str, Any]]:
+    """Devuelve lista de partidos del equipo en la temporada actual."""
+    body = _api_get(
+        f"https://{RAPIDAPI_HOST}/getNBATeamSchedule",
+        params={"teamID": str(team_id), "season": SEASON_YEAR},
+    )
+    if isinstance(body, list):
+        return body
+    if isinstance(body, dict):
+        return body.get("schedule", body.get("games", []))
+    return []
+
+
+def _compute_splits(
+    schedule: List[Dict[str, Any]], team_abbr: str
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    """
+    Calcula splits de temporada y last-N para un equipo.
+    Devuelve (season_splits, last_n_splits, recent_games).
+
+    season_splits / last_n_splits:
+      {"home_pf": [...], "home_pa": [...], "away_pf": [...], "away_pa": [...]}
+    """
+    completed = [
+        g for g in schedule
+        if g.get("gameStatus") == "Completed"
+        and g.get("homePts")
+        and g.get("awayPts")
+        and _safe_int(g.get("gameDate", "99999999")) <= DAY_INT
+    ]
+    # Ordenar por fecha asc para tomar los ultimos N
+    completed.sort(key=lambda g: g.get("gameDate", "0"))
+
+    home_pf, home_pa = [], []
+    away_pf, away_pa = [], []
+    recent_games = []
+
+    for g in completed:
+        h_pts = _safe_float(g.get("homePts"))
+        a_pts = _safe_float(g.get("awayPts"))
+        if h_pts is None or a_pts is None:
             continue
-        by_team[int(team_id)] = row_map
-    return by_team
+        is_home = g.get("home", "").upper() == team_abbr.upper()
+        if is_home:
+            home_pf.append(h_pts)
+            home_pa.append(a_pts)
+        else:
+            away_pf.append(a_pts)
+            away_pa.append(h_pts)
 
+        recent_games.append({
+            "date": g.get("gameDate"),
+            "opponent": g.get("away") if is_home else g.get("home"),
+            "home": is_home,
+            "pf": h_pts if is_home else a_pts,
+            "pa": a_pts if is_home else h_pts,
+            "result": g.get("homeResult") if is_home else g.get("awayResult"),
+        })
 
-def _fetch_team_splits(
-    team_id: int, last_n_games: int | None = None, timeout_s: int | None = None
-) -> Dict[str, Dict[str, Any]]:
-    if os.getenv("NBA_SPLITS_ENABLED", "1") != "1":
-        return {}
-    if timeout_s is None:
-        timeout_s = int(os.getenv("NBA_SPLITS_TIMEOUT", "6"))
-    params: Dict[str, Any] = {
-        "team_id": team_id,
-        "season": SEASON,
-        "per_mode_detailed": "PerGame",
-    }
-    if last_n_games is not None:
-        params["last_n_games"] = str(last_n_games)
-    try:
-        stats = teamdashboardbygeneralsplits.TeamDashboardByGeneralSplits(
-            headers=NBA_STATS_HEADERS,
-            **params,
-            timeout=timeout_s,
-        ).get_dict()
-    except Exception:
-        return {}
-    if not stats:
-        return {}
-    result_sets = stats.get("resultSets") or []
-    splits = {}
-    for rs in result_sets:
-        # OverallTeamDashboard: GROUP_VALUE = "Overall"
-        # LocationTeamDashboard: GROUP_VALUE = "Home" | "Road"  (no "Away")
-        if rs.get("name") not in ("OverallTeamDashboard", "LocationTeamDashboard"):
+    # Last-N: ultimos LAST_N partidos (home+away mezclados)
+    last_n = completed[-LAST_N:]
+    ln_pf, ln_pa = [], []
+    for g in last_n:
+        h_pts = _safe_float(g.get("homePts"))
+        a_pts = _safe_float(g.get("awayPts"))
+        if h_pts is None or a_pts is None:
             continue
-        headers = rs.get("headers") or []
-        rows = rs.get("rowSet") or []
-        for row in rows:
-            row_map = {headers[i]: row[i] for i in range(len(headers))}
-            loc = (row_map.get("GROUP_VALUE") or "").upper()
-            if loc == "ROAD":
-                loc = "AWAY"
-            splits[loc] = row_map
-    return splits
+        is_home = g.get("home", "").upper() == team_abbr.upper()
+        ln_pf.append(h_pts if is_home else a_pts)
+        ln_pa.append(a_pts if is_home else h_pts)
 
+    season_splits = {
+        "home_pf": home_pf, "home_pa": home_pa,
+        "away_pf": away_pf, "away_pa": away_pa,
+    }
+    last_n_splits = {"pf": ln_pf, "pa": ln_pa, "games": len(last_n)}
 
-def _opp_pts(row: Dict[str, Any]) -> float | None:
-    if not row:
-        return None
-    opp = row.get("OPP_PTS")
-    if opp is not None:
-        return opp
-    pts = row.get("PTS")
-    plus_minus = row.get("PLUS_MINUS")
-    if pts is None or plus_minus is None:
-        return None
-    try:
-        return float(pts) - float(plus_minus)
-    except Exception:
-        return None
+    return season_splits, last_n_splits, recent_games[-5:]   # ultimos 5 como referencia
 
 
 def main() -> None:
     fixtures = _read_fixtures(FIXTURES_PATH)
-    team_ids = set()
-    team_names: Dict[int, str] = {}
+
+    # Equipos del dia: {tank01_team_id: full_name}
+    team_ids_wanted: Dict[int, str] = {}
     for fx in fixtures:
-        hid = fx.get("home_team_id")
-        aid = fx.get("away_team_id")
-        if hid:
-            team_ids.add(int(hid))
-            team_names[int(hid)] = fx.get("home") or ""
-        if aid:
-            team_ids.add(int(aid))
-            team_names[int(aid)] = fx.get("away") or ""
+        for id_key, name_key in (("home_team_id", "home"), ("away_team_id", "away")):
+            tid = fx.get(id_key)
+            if tid is not None:
+                team_ids_wanted[int(tid)] = fx.get(name_key) or ""
 
-    try:
-        stats = leaguedashteamstats.LeagueDashTeamStats(
-            headers=NBA_STATS_HEADERS,
-            season=SEASON,
-            per_mode_detailed="PerGame",
-            measure_type_detailed_defense="Base",
-        ).get_dict()
-    except Exception as e:
-        print(f"[team_strength] [warn] nba stats no disponible: {e}")
-        stats = None
-    result = (stats.get("resultSets") or [])[0] if stats else {}
-    headers = result.get("headers") or []
-    rows = result.get("rowSet") or []
-
-    by_team: Dict[int, Dict[str, Any]] = {}
-    row_maps: List[Dict[str, Any]] = []
-    for row in rows:
-        row_map = {headers[i]: row[i] for i in range(len(headers))}
-        row_maps.append(row_map)
-        team_id = row_map.get("TEAM_ID")
-        if team_id is None:
-            continue
-        by_team[int(team_id)] = row_map
-
-    # Stats avanzados (ORTG/DRTG/PACE) y últimos 10 (base + advanced).
-    by_team_adv = _fetch_team_stats(measure_type="Advanced")
-    by_team_last10 = _fetch_team_stats(last_n_games=10, measure_type="Base")
-    # Advanced para last10: ORtg/DRtg/PACE recientes (Base no los incluye)
-    by_team_last10_adv = _fetch_team_stats(last_n_games=10, measure_type="Advanced")
-
-    # Debug opcional: imprime headers y filas completas.
-    if os.getenv("NBA_DEBUG_TEAM_STATS") == "1":
-        print(json.dumps({"headers": headers, "rows": row_maps}, ensure_ascii=False, indent=2))
-    
-    # Free memory
-    del stats
-    del result
-    del row_maps
-    del rows
+    all_teams = _fetch_all_teams()
 
     out: List[Dict[str, Any]] = []
-    for tid in sorted(team_ids):
-        row = by_team.get(tid, {})
-        row_adv = by_team_adv.get(tid, {})
-        row_last10 = by_team_last10.get(tid, {})
-        row_last10_adv = by_team_last10_adv.get(tid, {})
-        splits = _fetch_team_splits(tid)
+    for tid, team_name in sorted(team_ids_wanted.items()):
+        t = all_teams.get(tid, {})
+        team_abbr = t.get("teamAbv", "")
+        ppg = _safe_float(t.get("ppg"))
+        oppg = _safe_float(t.get("oppg"))
+        wins = _safe_int(t.get("wins"))
+        losses = _safe_int(t.get("loss"))
+        games_total = (wins + losses) if (wins is not None and losses is not None) else None
 
-        split_home = splits.get("HOME", {}) or row
-        split_away = splits.get("AWAY", {}) or row
-        split_l10 = row_last10 or row
+        # Splits desde el historial de partidos
+        splits: Dict[str, Any] = {}
+        last_n: Dict[str, Any] = {}
+        recent: List[Any] = []
+        if team_abbr:
+            try:
+                schedule = _fetch_schedule(tid)
+                splits, last_n, recent = _compute_splits(schedule, team_abbr)
+                print(f"[team_strength] {team_name}: {len(splits['home_pf'])}H / {len(splits['away_pf'])}A games")
+            except Exception as exc:
+                print(f"[team_strength] [warn] schedule error para {team_name}: {exc}")
 
-        pts = row.get("PTS")
-        opp_pts = _opp_pts(row)
-        home_pts = split_home.get("PTS")
-        home_opp_pts = _opp_pts(split_home)
-        away_pts = split_away.get("PTS")
-        away_opp_pts = _opp_pts(split_away)
-        l10_pts = split_l10.get("PTS")
-        l10_opp_pts = _opp_pts(split_l10)
         out.append(
             {
                 "team_id": tid,
-                "team": team_names.get(tid) or row.get("TEAM_NAME", ""),
-                "games": row.get("GP"),
-                "pf_pg": pts,
-                "pa_pg": opp_pts,
-                "ortg": row_adv.get("OFF_RATING"),
-                "drtg": row_adv.get("DEF_RATING"),
-                "pace": row_adv.get("PACE"),
-                "home_pf_pg": home_pts,
-                "home_pa_pg": home_opp_pts,
-                "home_ortg": split_home.get("OFF_RATING") or row_adv.get("OFF_RATING"),
-                "home_drtg": split_home.get("DEF_RATING") or row_adv.get("DEF_RATING"),
-                "home_pace": split_home.get("PACE") or row_adv.get("PACE"),
-                "away_pf_pg": away_pts,
-                "away_pa_pg": away_opp_pts,
-                "away_ortg": split_away.get("OFF_RATING") or row_adv.get("OFF_RATING"),
-                "away_drtg": split_away.get("DEF_RATING") or row_adv.get("DEF_RATING"),
-                "away_pace": split_away.get("PACE") or row_adv.get("PACE"),
-                "last10_games": split_l10.get("GP"),
-                "last10_pf_pg": l10_pts,
-                "last10_pa_pg": l10_opp_pts,
-                "last10_ortg": row_last10_adv.get("OFF_RATING"),
-                "last10_drtg": row_last10_adv.get("DEF_RATING"),
-                "last10_pace": row_last10_adv.get("PACE"),
-                "recent_games": [],
-                "stats_unknown": not bool(row),
-                "as_of": date.fromisoformat(DAY).isoformat(),
+                "team": team_name or f"{t.get('teamCity','')} {t.get('teamName','')}".strip(),
+                "games": games_total,
+                "pf_pg": ppg,
+                "pa_pg": oppg,
+                # Sin ORTG/DRTG/PACE (no disponibles en Tank01)
+                "ortg": None,
+                "drtg": None,
+                "pace": None,
+                # Splits home/away calculados desde schedule
+                "home_pf_pg": _avg(splits.get("home_pf", [])),
+                "home_pa_pg": _avg(splits.get("home_pa", [])),
+                "home_ortg": None,
+                "home_drtg": None,
+                "home_pace": None,
+                "away_pf_pg": _avg(splits.get("away_pf", [])),
+                "away_pa_pg": _avg(splits.get("away_pa", [])),
+                "away_ortg": None,
+                "away_drtg": None,
+                "away_pace": None,
+                # Last-N
+                "last10_games": last_n.get("games"),
+                "last10_pf_pg": _avg(last_n.get("pf", [])),
+                "last10_pa_pg": _avg(last_n.get("pa", [])),
+                "last10_ortg": None,
+                "last10_drtg": None,
+                "last10_pace": None,
+                "recent_games": recent,
+                "stats_unknown": not bool(t),
+                "as_of": DAY,
             }
         )
-        del splits  # Free inside loop
 
     Path(OUT_PATH).parent.mkdir(parents=True, exist_ok=True)
     Path(OUT_PATH).write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")

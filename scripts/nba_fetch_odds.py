@@ -141,10 +141,24 @@ def _cache_key(url: str, params: Dict[str, Any], salt: str = "") -> str:
 
 
 def get_json_cached(url: str, params: Dict[str, Any], cache_salt: str = "") -> Dict[str, Any]:
+    key = _cache_key(url, params, cache_salt)
+    cache_file = CACHE_DIR / f"{key}.json"
+
+    if not FORCE_REFRESH and cache_file.exists():
+        age = time.time() - cache_file.stat().st_mtime
+        if age < CACHE_TTL_SECONDS:
+            print(f"[odds] cache hit ({int(age)}s old) -> {cache_file.name}")
+            return json.loads(cache_file.read_text(encoding="utf-8"))
+
     r = requests.get(url, params=params, timeout=30)
+    remaining = r.headers.get("x-requests-remaining", "?")
+    used = r.headers.get("x-requests-used", "?")
+    print(f"[odds] API call -> used={used} remaining={remaining}")
     if r.status_code >= 400:
         raise SystemExit(f"Error consultando Odds API: {r.status_code} {r.text[:800]}")
-    return r.json()
+    data = r.json()
+    cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return data
 
 
 def _read_fixtures(path: str) -> List[Dict[str, Any]]:

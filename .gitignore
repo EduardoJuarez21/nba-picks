@@ -2,3 +2,14 @@ __pycache__/
 *.py[cod]
 .env
 .venv/
+
+# Datos generados por el pipeline (se regeneran en cada ejecucion)
+fuente/
+out/
+data/
+scripts/fuente/
+scripts/out/
+scripts/data/
+
+# Claude local settings
+.claude/
