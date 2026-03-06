@@ -242,7 +242,7 @@ def _db_url() -> str | None:
 
 
 _NUMERIC_FIELDS = {
-    "line", "odds", "books_count", "lambda_home", "lambda_away",
+    "match_id", "line", "odds", "books_count", "lambda_home", "lambda_away",
     "p_home", "p_draw", "p_away", "p_hat", "p_implied", "edge", "ev",
     "hh_games", "aa_games",
 }
@@ -296,14 +296,13 @@ def _db_save_picks_rows(day: str, rows: list[dict]) -> int:
 
     try:
         conn = psycopg2.connect(url)
-        conn.autocommit = False
+        conn.autocommit = True
         cur = conn.cursor()
         try:
             cur.execute("DELETE FROM picks_rows WHERE league = %s AND day = %s", ("nba", day))
             inserted = 0
             for r in rows:
                 try:
-                    cur.execute("SAVEPOINT sp")
                     cur.execute(
                         INSERT_SQL,
                         (
@@ -318,15 +317,9 @@ def _db_save_picks_rows(day: str, rows: list[dict]) -> int:
                             _v(r, "decision"), _v(r, "flags"), _v(r, "result"), _v(r, "bet"),
                         ),
                     )
-                    cur.execute("RELEASE SAVEPOINT sp")
                     inserted += 1
                 except Exception as exc:
-                    cur.execute("ROLLBACK TO SAVEPOINT sp")
                     _log("db", f"error insertando fila match_id={r.get('match_id')}: {exc}")
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
         finally:
             cur.close()
             conn.close()
