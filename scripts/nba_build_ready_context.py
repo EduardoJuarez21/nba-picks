@@ -33,6 +33,7 @@ TEAM_STRENGTH_PATH = os.getenv(
     "OUT_PATH_TEAM_STRENGTH",
     versioned_path(LEAGUE, "team_strength", "team_strength", DAY),
 )
+ADVANCED_PATH = os.getenv("OUT_PATH_ADVANCED", versioned_path(LEAGUE, "advanced", "advanced_stats", DAY))
 
 # Si INJ_PATH no existe, haremos fallback a rutas alternativas.
 INJ_PATH_ENV = os.getenv("INJ_PATH", "").strip() or None
@@ -406,6 +407,44 @@ def _strength_maps(strength_list: List[Dict[str, Any]]) -> tuple[Dict[str, Any],
     return by_team, by_id
 
 
+def _load_advanced_stats() -> Dict[str, Dict[str, Any]]:
+    """Carga advanced stats (ORTG/DRTG/PACE) desde el archivo generado por nba_fetch_advanced_stats."""
+    candidates = [
+        ADVANCED_PATH,
+        str(Path("data") / versioned_path(LEAGUE, "advanced", "advanced_stats", DAY)),
+        versioned_path(LEAGUE, "advanced", "advanced_stats", DAY),
+    ]
+    for p in candidates:
+        if not p:
+            continue
+        path = Path(p)
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+    return {}
+
+
+def _merge_advanced_into_strength(strength: Dict[str, Any], adv: Dict[str, Any], team_name: str) -> None:
+    """Inyecta ortg/drtg/pace del advanced stats dict en el strength dict (in-place)."""
+    if not adv or not team_name:
+        return
+    # Intentar match por nombre completo primero, luego por nickname
+    entry = adv.get(team_name) or adv.get(_team_nickname(team_name))
+    if not entry:
+        # Búsqueda fuzzy normalizada
+        norm = _norm_team(team_name)
+        for key, val in adv.items():
+            if _norm_team(key) == norm:
+                entry = val
+                break
+    if entry:
+        for field in ("ortg", "drtg", "pace"):
+            if strength.get(field) is None and entry.get(field) is not None:
+                strength[field] = entry[field]
+
+
 def main() -> None:
     fixtures_path = _find_fixtures_path(DAY) or FIXTURES_PATH
     odds_path = _find_odds_path(DAY) or ODDS_PATH
@@ -414,6 +453,11 @@ def main() -> None:
     fixtures_raw = _load_json(fixtures_path) if fixtures_path else []
     odds_raw = _load_json(odds_path) if odds_path else {}
     strength_raw = _load_json(strength_path) if strength_path else []
+    advanced_stats = _load_advanced_stats()
+    if advanced_stats:
+        print(f"[advanced] cargados {len(advanced_stats)} equipos con ORTG/DRTG/PACE")
+    else:
+        print("[advanced] sin datos de advanced stats (DATA_LOW se activará)")
 
     fixtures = _normalize_fixtures(fixtures_raw)
     odds = _normalize_odds(odds_raw)
@@ -466,14 +510,19 @@ def main() -> None:
         home_strength = {}
         away_strength = {}
         if home_id is not None:
-            home_strength = strength_by_id.get(str(home_id), {})
+            home_strength = dict(strength_by_id.get(str(home_id), {}))
         if not home_strength and home:
-            home_strength = strength_by_team.get(home, {}) or strength_by_team.get(_team_nickname(home), {})
+            home_strength = dict(strength_by_team.get(home, {}) or strength_by_team.get(_team_nickname(home), {}))
 
         if away_id is not None:
-            away_strength = strength_by_id.get(str(away_id), {})
+            away_strength = dict(strength_by_id.get(str(away_id), {}))
         if not away_strength and away:
-            away_strength = strength_by_team.get(away, {}) or strength_by_team.get(_team_nickname(away), {})
+            away_strength = dict(strength_by_team.get(away, {}) or strength_by_team.get(_team_nickname(away), {}))
+
+        # Inyectar ORTG/DRTG/PACE desde advanced stats si están disponibles
+        if advanced_stats:
+            _merge_advanced_into_strength(home_strength, advanced_stats, str(home))
+            _merge_advanced_into_strength(away_strength, advanced_stats, str(away))
 
         home_rest = _compute_rest_flags(str(home), recent_games_map, DAY)
         away_rest = _compute_rest_flags(str(away), recent_games_map, DAY)

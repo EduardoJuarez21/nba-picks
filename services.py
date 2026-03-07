@@ -70,6 +70,7 @@ def _set_versioned_paths_nba(day: str) -> None:
     os.environ["OUT_PATH_INJURIES"] = out("injuries", "injuries", "json")
     os.environ["OUT_PATH_FEATURES"] = out("features", "ready_context", "json")
     os.environ["OUT_PATH_ODDS"] = out("odds", "odds", "json")
+    os.environ["OUT_PATH_ADVANCED"] = out("advanced", "advanced_stats", "json")
     os.environ["OUT_PATH_PRED"] = out("predictions", "predictions", "json")
     os.environ["OUT_TSV"] = str(Path("out") / "nba" / f"picks_{safe_day}.tsv")
 
@@ -132,6 +133,7 @@ def _run_nba_pipeline(day: str) -> str:
             os.getenv("OUT_PATH_TEAM_STRENGTH"),
             skip_if_exists,
         ),
+        ("advanced", [py, str(SCRIPTS_DIR / "nba_fetch_advanced_stats.py")], os.getenv("OUT_PATH_ADVANCED"), skip_if_exists),
         ("injuries", [py, str(SCRIPTS_DIR / "nba_injuries_pdf.py")], os.getenv("OUT_PATH_INJURIES"), skip_if_exists),
         ("features", [py, str(SCRIPTS_DIR / "nba_build_ready_context.py")], os.getenv("OUT_PATH_FEATURES"), skip_if_exists),
         ("pred", [py, str(SCRIPTS_DIR / "predicciones_nba.py")], os.getenv("OUT_TSV"), skip_if_exists),
