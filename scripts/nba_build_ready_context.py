@@ -441,8 +441,12 @@ def _merge_advanced_into_strength(strength: Dict[str, Any], adv: Dict[str, Any],
                 break
     if entry:
         for field in ("ortg", "drtg", "pace"):
-            if strength.get(field) is None and entry.get(field) is not None:
-                strength[field] = entry[field]
+            val = entry.get(field)
+            if val is not None:
+                strength[field] = val
+                strength[f"home_{field}"] = val
+                strength[f"away_{field}"] = val
+                strength[f"last10_{field}"] = val
 
 
 def main() -> None:
