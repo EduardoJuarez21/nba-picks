@@ -799,10 +799,8 @@ def _candidate_status(c: Dict[str, Any], flags: List[str]) -> str:
         if isinstance(line, (int, float)) and abs(line) >= BIG_SPREAD_ABS:
             return "NO_BET"
 
-        # Propagación: si el ML del mismo partido fue flaggeado como divergente,
-        # el SPREAD hereda el mismo sesgo en exp_margin => demotamos a LEAN.
-        if "ML_MARKET_DIVERGENCE" in flags:
-            return "LEAN"
+        # Nota: ML_MARKET_DIVERGENCE NO se propaga al SPREAD.
+        # El SPREAD evalúa márgenes directamente y tiene sus propios gates de edge.
 
     # === NUEVO: TOTALES también rechazan SEV4PLUS ===
     if market == "TOTAL":
@@ -848,10 +846,8 @@ def _candidate_status(c: Dict[str, Any], flags: List[str]) -> str:
         flags.append("ML_MARKET_DIVERGENCE")
         return "LEAN"
 
-    # Fix 2a: TOTAL con ML_MARKET_DIVERGENCE propagado + edge propio alto.
-    # Si el ML ya fue demotado por divergencia, la misma incertidumbre afecta el total.
-    if market == "TOTAL" and "ML_MARKET_DIVERGENCE" in flags and isinstance(edge, (int, float)) and edge > EDGE_ML_SUSPICION:
-        return "LEAN"
+    # ML_MARKET_DIVERGENCE no se propaga al TOTAL.
+    # El TOTAL tiene su propio gate (EDGE_TOTAL_SUSPICION) más abajo.
 
     # Fix 2b: TOTAL con edge extremo vs Pinnacle (independiente del ML).
     # Edge > EDGE_TOTAL_SUSPICION indica que el modelo no está capturando info del mercado
