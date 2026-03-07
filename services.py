@@ -292,7 +292,10 @@ def _db_save_picks_rows(day: str, rows: list[dict]) -> int:
 
     def _v(r: dict, key: str) -> object:
         val = r.get(key, "")
-        return _coerce_num(val) if key in _NUMERIC_FIELDS else (str(val) if val is not None else "")
+        if key in _NUMERIC_FIELDS:
+            return _coerce_num(val)
+        s = str(val).strip() if val is not None else ""
+        return s if s else None
 
     try:
         conn = psycopg2.connect(url)
