@@ -133,7 +133,12 @@ def _run_nba_pipeline(day: str) -> str:
             os.getenv("OUT_PATH_TEAM_STRENGTH"),
             skip_if_exists,
         ),
-        ("advanced", [py, str(SCRIPTS_DIR / "nba_fetch_advanced_stats.py")], os.getenv("OUT_PATH_ADVANCED"), skip_if_exists),
+        (
+            "advanced",
+            [py, str(SCRIPTS_DIR / "nba_fetch_advanced_stats.py")],
+            os.getenv("OUT_PATH_ADVANCED"),
+            skip_if_exists,
+        ),
         ("injuries", [py, str(SCRIPTS_DIR / "nba_injuries_pdf.py")], os.getenv("OUT_PATH_INJURIES"), skip_if_exists),
         ("features", [py, str(SCRIPTS_DIR / "nba_build_ready_context.py")], os.getenv("OUT_PATH_FEATURES"), skip_if_exists),
         ("pred", [py, str(SCRIPTS_DIR / "predicciones_nba.py")], os.getenv("OUT_TSV"), skip_if_exists),

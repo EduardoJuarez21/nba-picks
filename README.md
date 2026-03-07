@@ -14,7 +14,8 @@ Microservicio Flask para separar el flujo NBA del proyecto principal.
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 - `DATA_DIR` (default: `data`)
-- `NBA_STATS_USER_AGENT` (opcional, para `stats.nba.com`)
+- `NBA_BR_USER_AGENT` (opcional, user-agent para Basketball Reference)
+- `NBA_ADVANCED_USE_NBA_API_FALLBACK` (opcional, `true/false`; default `false`)
 
 ## Ejecutar local
 

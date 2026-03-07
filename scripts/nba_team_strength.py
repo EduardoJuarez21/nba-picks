@@ -208,6 +208,16 @@ def main() -> None:
             except Exception as exc:
                 print(f"[team_strength] [warn] schedule error para {team_name}: {exc}")
 
+        # ORTG/DRTG aproximados desde ppg/oppg con PACE baseline = 100
+        # (NBA pace real ≈ 98-102; usando ppg directamente como proxy de ORTG)
+        NBA_PACE = 100.0
+        home_pf_avg = _avg(splits.get("home_pf", []))
+        home_pa_avg = _avg(splits.get("home_pa", []))
+        away_pf_avg = _avg(splits.get("away_pf", []))
+        away_pa_avg = _avg(splits.get("away_pa", []))
+        last10_pf_avg = _avg(last_n.get("pf", []))
+        last10_pa_avg = _avg(last_n.get("pa", []))
+
         out.append(
             {
                 "team_id": tid,
@@ -215,28 +225,27 @@ def main() -> None:
                 "games": games_total,
                 "pf_pg": ppg,
                 "pa_pg": oppg,
-                # Sin ORTG/DRTG/PACE (no disponibles en Tank01)
-                "ortg": None,
-                "drtg": None,
-                "pace": None,
+                "ortg": ppg,
+                "drtg": oppg,
+                "pace": NBA_PACE,
                 # Splits home/away calculados desde schedule
-                "home_pf_pg": _avg(splits.get("home_pf", [])),
-                "home_pa_pg": _avg(splits.get("home_pa", [])),
-                "home_ortg": None,
-                "home_drtg": None,
-                "home_pace": None,
-                "away_pf_pg": _avg(splits.get("away_pf", [])),
-                "away_pa_pg": _avg(splits.get("away_pa", [])),
-                "away_ortg": None,
-                "away_drtg": None,
-                "away_pace": None,
+                "home_pf_pg": home_pf_avg,
+                "home_pa_pg": home_pa_avg,
+                "home_ortg": home_pf_avg,
+                "home_drtg": home_pa_avg,
+                "home_pace": NBA_PACE,
+                "away_pf_pg": away_pf_avg,
+                "away_pa_pg": away_pa_avg,
+                "away_ortg": away_pf_avg,
+                "away_drtg": away_pa_avg,
+                "away_pace": NBA_PACE,
                 # Last-N
                 "last10_games": last_n.get("games"),
-                "last10_pf_pg": _avg(last_n.get("pf", [])),
-                "last10_pa_pg": _avg(last_n.get("pa", [])),
-                "last10_ortg": None,
-                "last10_drtg": None,
-                "last10_pace": None,
+                "last10_pf_pg": last10_pf_avg,
+                "last10_pa_pg": last10_pa_avg,
+                "last10_ortg": last10_pf_avg,
+                "last10_drtg": last10_pa_avg,
+                "last10_pace": NBA_PACE,
                 "recent_games": recent,
                 "stats_unknown": not bool(t),
                 "as_of": DAY,

@@ -4,3 +4,7 @@ python-dotenv
 requests
 gunicorn
 psycopg2-binary
+nba_api
+pandas
+beautifulsoup4
+lxml
