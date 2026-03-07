@@ -1,8 +1,8 @@
 """nba_fetch_advanced_stats.py
 
 Fetches ORTG, DRTG and PACE by team.
-Primary source: Basketball Reference.
-Optional fallback: nba_api.
+Primary source: ESPN Hollinger Team Stats (pd.read_html).
+Fallback: Basketball Reference.
 
 Output format:
   {"Team Name": {"ortg": x, "drtg": x, "pace": x}, ...}
@@ -38,6 +38,8 @@ USE_NBA_API_FALLBACK = os.getenv("NBA_ADVANCED_USE_NBA_API_FALLBACK", "0").strip
 
 DEFAULT_PATH = versioned_path(LEAGUE, "advanced", "advanced_stats", DAY)
 OUT_PATH = os.getenv("OUT_PATH_ADVANCED", DEFAULT_PATH)
+
+ESPN_HOLLINGER_URL = "https://www.espn.com/nba/hollinger/teamstats"
 
 
 def _safe_float(v: Any) -> Optional[float]:
@@ -115,6 +117,39 @@ def _clean_table(df: pd.DataFrame) -> pd.DataFrame:
     out["pace"] = pd.to_numeric(out["pace"], errors="coerce")
     out = out.dropna(subset=["team", "ortg", "drtg", "pace"]).reset_index(drop=True)
     return out
+
+
+def _fetch_from_espn_hollinger() -> Dict[str, Dict[str, Any]]:
+    """Scrapes ESPN Hollinger team stats: OFF EFF → ortg, DEF EFF → drtg, PACE → pace."""
+    tables = pd.read_html(ESPN_HOLLINGER_URL, header=1)
+    if not tables:
+        raise RuntimeError("No se encontraron tablas en ESPN Hollinger")
+
+    df = tables[0]
+    df.columns = [str(c).strip() for c in df.columns]
+    df = df[df["TEAM"].notna() & (df["TEAM"] != "TEAM")]
+
+    col_map = {c.upper(): c for c in df.columns}
+    off_col = col_map.get("OFF EFF") or col_map.get("OFFEFF") or col_map.get("OFF.EFF")
+    def_col = col_map.get("DEF EFF") or col_map.get("DEFEFF") or col_map.get("DEF.EFF")
+    pace_col = col_map.get("PACE")
+
+    if not off_col or not def_col or not pace_col:
+        raise RuntimeError(f"Columnas ESPN no encontradas. Disponibles: {list(df.columns)}")
+
+    result: Dict[str, Dict[str, Any]] = {}
+    for _, row in df.iterrows():
+        team = str(row["TEAM"]).strip()
+        if not team:
+            continue
+        result[team] = {
+            "ortg": _safe_float(row.get(off_col)),
+            "drtg": _safe_float(row.get(def_col)),
+            "pace": _safe_float(row.get(pace_col)),
+        }
+
+    print(f"[advanced/espn] {len(result)} equipos")
+    return result
 
 
 def _fetch_from_basketball_reference() -> Dict[str, Dict[str, Any]]:
@@ -221,18 +256,27 @@ def _fetch_from_nba_api() -> Dict[str, Dict[str, Any]]:
 
 
 def fetch_advanced_stats() -> Dict[str, Dict[str, Any]]:
+    # 1. ESPN Hollinger (fuente principal)
+    try:
+        return _fetch_from_espn_hollinger()
+    except Exception as exc:
+        print(f"[advanced/espn] error: {exc}")
+
+    # 2. Basketball Reference (fallback)
     try:
         return _fetch_from_basketball_reference()
     except Exception as exc:
         print(f"[advanced/br] error: {exc}")
-        if not USE_NBA_API_FALLBACK:
-            return {}
+
+    # 3. nba_api (fallback opcional)
+    if USE_NBA_API_FALLBACK:
         print("[advanced] intentando fallback nba_api")
         try:
             return _fetch_from_nba_api()
         except Exception as exc2:
             print(f"[advanced/nba_api] error: {exc2}")
-            return {}
+
+    return {}
 
 
 def main() -> None:
